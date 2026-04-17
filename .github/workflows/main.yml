@@ -1,36 +1,61 @@
-name: Sync from upstream
+name: Upstream Sync
 
+# 触发方式：
+# 1. 定时每天同步一次
+# 2. 手动触发（workflow_dispatch）
 on:
   schedule:
-    - cron: "0 0 * * *"
-  workflow_dispatch:
+    - cron: "0 0 * * *"  # 每天 UTC 0点自动同步
+  workflow_dispatch:     # 支持手动在 GitHub Actions 页面点击运行
 
 jobs:
-  sync:
+  sync_latest_from_upstream:
+    name: Sync upstream repository changes
     runs-on: ubuntu-latest
 
+    # 防止非 fork 仓库误执行（安全机制）
+    if: ${{ github.event.repository.fork }}
+
     steps:
-      - name: Checkout repo
+      # =========================
+      # Step 1: 拉取当前仓库代码
+      # =========================
+      - name: Checkout target repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # 拉取完整 git 历史，避免 merge / rebase 出错
 
-      - name: Setup git identity
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
+      # =========================
+      # Step 2: 使用稳定的 upstream 同步插件
+      # =========================
+      - name: Sync from upstream repository
+        uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
+        with:
+          # 上游仓库（你要同步的源）
+          upstream_sync_repo: ethgan/CF-Worker-BestIP-collector
 
-      - name: Add upstream safely
-        run: |
-          git remote remove upstream || true
-          git remote add upstream https://github.com/ethgan/CF-Worker-BestIP-collector.git
-          git fetch upstream
+          # 上游分支（一般是 main）
+          upstream_sync_branch: main
 
-      - name: Sync branch
-        run: |
-          git checkout main || git checkout master
-          git merge upstream/main || git merge upstream/master
+          # 你的目标分支（通常也是 main）
+          target_sync_branch: main
 
-      - name: Push changes
+          # GitHub 自动 token（用于 push 回你的 fork）
+          target_repo_token: ${{ secrets.GITHUB_TOKEN }}
+
+          # =========================
+          # 测试模式开关
+          # =========================
+          # true  = 只模拟同步，不会真正 push
+          # false = 正常执行同步（必须设 false）
+          test_mode: false
+
+      # =========================
+      # Step 3: 同步失败提示
+      # =========================
+      - name: Sync check (error handler)
+        if: failure()
         run: |
-          git push origin HEAD
+          echo "❌ 同步失败：通常是上游 workflow 或分支结构发生变化"
+          echo "👉 解决方法：手动点击 Sync fork 或检查 upstream 分支"
+          exit 1
