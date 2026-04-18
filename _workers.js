@@ -1968,7 +1968,7 @@ export default {
     return jsonResponse(data);
   }
   
-  // 处理优质IP列表获取（文本格式，IP#实际的延迟ms格式）
+  // 处理优质IP列表获取（文本格式，IP#国家格式/IP#实际的延迟ms格式）
   async function handleGetFastIPsText(env, request) {
     if (!await verifyAdmin(request, env)) {
       return jsonResponse({ error: '需要管理员权限' }, 401);
@@ -1978,7 +1978,8 @@ export default {
     const fastIPs = data.fastIPs || [];
     
     // 格式化为 IP#实际的延迟ms
-    const ipList = fastIPs.map(item => `${item.ip}#${item.latency}ms`).join('\n');
+    // const ipList = fastIPs.map(item => `${item.ip}#${item.latency}ms`).join('\n');
+    const ipList = fastIPs.map(item => `${item.ip}#${item.country}`).join('\n');
     
     return new Response(ipList, {
       headers: {
@@ -2048,6 +2049,33 @@ export default {
         time: new Date().toISOString()
       }, 500);
     }
+  }
+
+  // 🌍 获取IP国家（带KV缓存优化）
+  async function getIPCountryCached(env, ip) {
+      try {
+        const key = `geo:${ip}`;
+    
+        const cached = await env.IP_STORAGE.get(key);
+        if (cached) return cached;
+    
+        const res = await fetch(`https://ipapi.co/${ip}/json/`);
+    
+        let country = 'Unknown';
+    
+        if (res.ok) {
+          const data = await res.json();
+          country = data.country_name || 'Unknown';
+        }
+    
+        await env.IP_STORAGE.put(key, country, {
+          expirationTtl: 86400 * 7
+        });
+    
+        return country;
+      } catch (e) {
+        return 'Unknown';
+      }
   }
   
   // 处理手动更新
@@ -2119,9 +2147,11 @@ export default {
         if (result.status === 'fulfilled') {
           const speedData = result.value;
           if (speedData.success && speedData.latency) {
+            const country = await getIPCountryCached(env, ip);
             speedResults.push({
               ip: ip,
-              latency: Math.round(speedData.latency) // 确保延迟是整数
+              latency: Math.round(speedData.latency), // 确保延迟是整数
+              country: country
             });
           }
         }
