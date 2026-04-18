@@ -44,6 +44,12 @@ export default {
           headers: { 'Content-Type': 'text/plain' }
         });
       }
+      if (!env.GEO_STORAGE) {
+        return new Response('KV namespace GEO_STORAGE is not bound. Please bind it in Worker settings.', {
+          status: 500,
+          headers: { 'Content-Type': 'text/plain' }
+        });
+      }
       
       if (request.method === 'OPTIONS') {
         return handleCORS();
@@ -2052,31 +2058,34 @@ export default {
   }
 
   // 🌍 获取IP国家（带KV缓存优化）
-  async function getIPCountryCached(env, ip) {
-      try {
-        const key = `geo:${ip}`;
-    
-        const cached = await env.IP_STORAGE.get(key);
-        if (cached) return cached;
-    
-        const res = await fetch(`https://ipapi.co/${ip}/json/`);
-    
-        let country = 'Unknown';
-    
-        if (res.ok) {
-          const data = await res.json();
-          country = data.country_name || 'Unknown';
-        }
-    
-        await env.IP_STORAGE.put(key, country, {
-          expirationTtl: 86400 * 7
-        });
-    
-        return country;
-      } catch (e) {
-        return 'Unknown';
-      }
+ async function getIPCountryCached(env, ip) {
+  try {
+    const key = `geo:${ip}`;
+
+    // ① 先查 GEO_STORAGE
+    const cached = await env.GEO_STORAGE.get(key);
+    if (cached) return cached;
+
+    // ② 请求 GeoIP API
+    const res = await fetch(`https://ipapi.co/${ip}/json/`);
+
+    let country = 'Unknown';
+
+    if (res.ok) {
+      const data = await res.json();
+      country = data.country_name || 'Unknown';
+    }
+
+    // ③ 写入 GEO_STORAGE（缓存7天）
+    await env.GEO_STORAGE.put(key, country, {
+      expirationTtl: 86400 * 7
+    });
+
+    return country;
+  } catch (e) {
+    return 'Unknown';
   }
+}
   
   // 处理手动更新
   async function handleUpdate(env, request) {
@@ -2088,6 +2097,9 @@ export default {
       // 再次检查 KV 绑定
       if (!env.IP_STORAGE) {
         throw new Error('KV namespace IP_STORAGE is not bound. Please check your Worker settings.');
+      }
+      if (!env.GEO_STORAGE) {
+        throw new Error('KV namespace GEO_STORAGE is not bound. Please check your Worker settings.');
       }
 
       const startTime = Date.now();
